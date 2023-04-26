@@ -26,17 +26,24 @@ describe(Support.getTestDialectTeaser('SQL'), () => {
 
       describe('pgEnumName', () => {
         it('does not add schema when options: { schema: false }', () => {
-          expect(sql.pgEnumName(PublicUser.getTableName(), 'mood', { schema: false }))
+          expect(sql.pgEnumName(PublicUser.getTableName(), 'mood', undefined, { schema: false }))
             .to.equal('"enum_users_mood"');
-          expect(sql.pgEnumName(FooUser.getTableName(), 'theirMood', { schema: false }))
+          expect(sql.pgEnumName(FooUser.getTableName(), 'theirMood', undefined, { schema: false }))
             .to.equal('"enum_users_theirMood"');
         });
 
         it('properly quotes both the schema and the enum name', () => {
-          expect(sql.pgEnumName(PublicUser.getTableName(), 'mood', PublicUser.getAttributes().mood.type))
+          expect(sql.pgEnumName(PublicUser.getTableName(), 'mood', undefined, PublicUser.getAttributes().mood.type))
             .to.equal('"public"."enum_users_mood"');
-          expect(sql.pgEnumName(FooUser.getTableName(), 'theirMood', FooUser.getAttributes().mood.type))
+          expect(sql.pgEnumName(FooUser.getTableName(), 'theirMood', undefined, FooUser.getAttributes().mood.type))
             .to.equal('"foo"."enum_users_theirMood"');
+        });
+
+        it('properly uses a provided custom name', () => {
+          expect(sql.pgEnumName(PublicUser.getTableName(), 'mood', 'allowed_moods'))
+            .to.equal('"public"."enum_allowed_moods"');
+          expect(sql.pgEnumName(FooUser.getTableName(), 'theirMood', 'allowed_moods'))
+            .to.equal('"foo"."enum_allowed_moods"');
         });
       });
 

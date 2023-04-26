@@ -37,6 +37,7 @@ export class PostgresQueryInterface extends AbstractQueryInterface {
         type instanceof DataTypes.ENUM
         || type instanceof DataTypes.ARRAY && type.options.type instanceof DataTypes.ENUM // ARRAY sub type is ENUM
       ) {
+        const customName = type instanceof DataTypes.ARRAY ? type.options.type.options.customName : type.options.customName;
         sql = this.queryGenerator.pgListEnums(tableName, attribute.field || keys[i], options);
         promises.push(this.sequelize.queryRaw(
           sql,
@@ -50,7 +51,7 @@ export class PostgresQueryInterface extends AbstractQueryInterface {
     let enumIdx = 0;
 
     // This little function allows us to re-use the same code that prepends or appends new value to enum array
-    const addEnumValue = (field, value, relativeValue, position = 'before', spliceStart = promises.length) => {
+    const addEnumValue = (field, value, relativeValue, customName, position = 'before', spliceStart = promises.length) => {
       const valueOptions = { ...options };
       valueOptions.before = null;
       valueOptions.after = null;
@@ -67,7 +68,7 @@ export class PostgresQueryInterface extends AbstractQueryInterface {
 
       promises.splice(spliceStart, 0, () => {
         return this.sequelize.queryRaw(this.queryGenerator.pgEnumAdd(
-          tableName, field, value, valueOptions,
+          tableName, field, value, valueOptions, customName,
         ), valueOptions);
       });
     };
@@ -82,6 +83,9 @@ export class PostgresQueryInterface extends AbstractQueryInterface {
         type instanceof DataTypes.ENUM
         || type instanceof DataTypes.ARRAY && enumType instanceof DataTypes.ENUM // ARRAY sub type is ENUM
       ) {
+        // We need the custom name (or that it is undefined) to pass down into pgEnumAdd, we can get it off of ENUM.options.customName
+        const customName = enumType.options.customName;
+
         // If the enum type doesn't exist then create it
         if (!results[enumIdx]) {
           promises.push(() => {
@@ -116,7 +120,7 @@ export class PostgresQueryInterface extends AbstractQueryInterface {
                 break;
               }
 
-              addEnumValue(field, newValuesBefore[reverseIdx], lastOldEnumValue, 'before', promisesLength);
+              addEnumValue(field, newValuesBefore[reverseIdx], lastOldEnumValue, customName, 'before', promisesLength);
             }
 
             // we detect the most 'right' position of old value in new enum array so we can append new values to it
@@ -128,7 +132,7 @@ export class PostgresQueryInterface extends AbstractQueryInterface {
           if (lastOldEnumValue && rightestPosition < vals.length - 1) {
             const remainingEnumValues = vals.slice(rightestPosition + 1);
             for (let reverseIdx = remainingEnumValues.length - 1; reverseIdx >= 0; reverseIdx--) {
-              addEnumValue(field, remainingEnumValues[reverseIdx], lastOldEnumValue, 'after');
+              addEnumValue(field, remainingEnumValues[reverseIdx], lastOldEnumValue, customName, 'after');
             }
           }
 

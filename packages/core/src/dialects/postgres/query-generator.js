@@ -234,8 +234,8 @@ export class PostgresQueryGenerator extends PostgresQueryGeneratorTypeScript {
 
       if (attributes[attributeName].startsWith('ENUM(')) {
         attrSql += this.pgEnum(tableName, attributeName, attributes[attributeName]);
-        definition = definition.replace(/^ENUM\(.+\)/, this.pgEnumName(tableName, attributeName, { schema: false }));
-        definition += ` USING (${this.quoteIdentifier(attributeName)}::${this.pgEnumName(tableName, attributeName)})`;
+        definition = definition.replace(/^ENUM\(.+\)/, this.pgEnumName(tableName, attributeName, attributes[attributeName].customName, { schema: false }));
+        definition += ` USING (${this.quoteIdentifier(attributeName)}::${this.pgEnumName(tableName, attributeName, attributes[attributeName].customName)})`;
       }
 
       if (/UNIQUE;*$/.test(definition)) {
@@ -650,15 +650,21 @@ export class PostgresQueryGenerator extends PostgresQueryGeneratorTypeScript {
     }).join(' OR ');
   }
 
-  pgEnumName(tableName, columnName, options = {}) {
+  pgEnumName(tableName, columnName, customName, options = {}) {
     const tableDetails = this.extractTableDetails(tableName, options);
 
-    const enumName = `enum_${tableDetails.tableName}_${columnName}`;
-    if (options.noEscape) {
-      return enumName;
+    let prefixedEnumName;
+    if (customName == null) {
+      prefixedEnumName = `enum_${tableDetails.tableName}_${columnName}`;
+    } else {
+      prefixedEnumName = `enum_${customName}`;
     }
 
-    const escapedEnumName = this.quoteIdentifier(enumName);
+    if (options.noEscape) {
+      return prefixedEnumName;
+    }
+
+    const escapedEnumName = this.quoteIdentifier(prefixedEnumName);
 
     if (options.schema !== false && tableDetails.schema) {
       return this.quoteIdentifier(tableDetails.schema) + tableDetails.delimiter + escapedEnumName;
@@ -667,7 +673,7 @@ export class PostgresQueryGenerator extends PostgresQueryGeneratorTypeScript {
     return escapedEnumName;
   }
 
-  pgListEnums(tableName, attrName, options) {
+  pgListEnums(tableName, attrName, customName, options) {
     let enumName = '';
     const tableDetails = tableName != null
       ? this.extractTableDetails(tableName, options)
@@ -675,7 +681,7 @@ export class PostgresQueryGenerator extends PostgresQueryGeneratorTypeScript {
 
     if (tableDetails.tableName && attrName) {
       // pgEnumName escapes as an identifier, we want to escape it as a string
-      enumName = ` AND t.typname=${this.escape(this.pgEnumName(tableDetails.tableName, attrName, { noEscape: true }))}`;
+      enumName = ` AND t.typname=${this.escape(this.pgEnumName(tableDetails.tableName, attrName, customName, { noEscape: true }))}`;
     }
 
     return 'SELECT t.typname enum_name, array_agg(e.enumlabel ORDER BY enumsortorder) enum_value FROM pg_type t '
@@ -685,7 +691,7 @@ export class PostgresQueryGenerator extends PostgresQueryGeneratorTypeScript {
   }
 
   pgEnum(tableName, attr, dataType, options) {
-    const enumName = this.pgEnumName(tableName, attr, options);
+    const enumName = this.pgEnumName(tableName, attr, dataType?.options?.name, options);
     let values;
 
     if (dataType instanceof ENUM && dataType.options.values) {
@@ -696,14 +702,14 @@ export class PostgresQueryGenerator extends PostgresQueryGeneratorTypeScript {
 
     let sql = `DO ${this.escape(`BEGIN CREATE TYPE ${enumName} AS ${values}; EXCEPTION WHEN duplicate_object THEN null; END`)};`;
     if (Boolean(options) && options.force === true) {
-      sql = this.pgEnumDrop(tableName, attr) + sql;
+      sql = this.pgEnumDrop(tableName, attr, enumName) + sql;
     }
 
     return sql;
   }
 
-  pgEnumAdd(tableName, attr, value, options) {
-    const enumName = this.pgEnumName(tableName, attr);
+  pgEnumAdd(tableName, attr, value, options, customName) {
+    const enumName = this.pgEnumName(tableName, attr, customName, {});
     let sql = `ALTER TYPE ${enumName} ADD VALUE IF NOT EXISTS `;
 
     sql += this.escape(value);
@@ -760,7 +766,7 @@ export class PostgresQueryGenerator extends PostgresQueryGeneratorTypeScript {
     }
 
     if (dataType.startsWith('ENUM(')) {
-      dataType = dataType.replace(/^ENUM\(.+\)/, this.pgEnumName(tableName, attr));
+      dataType = dataType.replace(/^ENUM\(.+\)/, this.pgEnumName(tableName, attr)); // TODO fix pgEnumName
     }
 
     return dataType;

@@ -2124,6 +2124,7 @@ export class VIRTUAL<T> extends AbstractDataType<T> {
 
 export interface EnumOptions<Member extends string> {
   values: Member[];
+  customName?: string | undefined;
 }
 
 /**
@@ -2166,6 +2167,8 @@ export class ENUM<Member extends string> extends AbstractDataType<Member> {
     super();
 
     let values: Member[];
+    let name: string | undefined;
+
     if (isObject(args[0])) {
       if (args.length > 1) {
         throw new TypeError('DataTypes.ENUM has been constructed incorrectly: Its first parameter is the option bag or the array of values, but more than one parameter has been provided.');
@@ -2174,7 +2177,9 @@ export class ENUM<Member extends string> extends AbstractDataType<Member> {
       if (Array.isArray(args[0])) {
         values = args[0];
       } else {
+        // Only the object form supports a name because the first argument being a string means to treat every argument as a value
         values = args[0].values;
+        name = args[0].customName;
       }
     } else {
       // @ts-expect-error -- we'll assert in the next line whether this is the right type
@@ -2212,6 +2217,7 @@ sequelize.define('MyModel', {
 
     this.options = {
       values,
+      customName: name,
     };
   }
 
