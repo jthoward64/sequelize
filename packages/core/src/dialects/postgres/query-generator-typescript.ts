@@ -3,6 +3,8 @@ import { joinSQLFragments } from '../../utils/join-sql-fragments';
 import { generateIndexName } from '../../utils/string';
 import { AbstractQueryGenerator } from '../abstract/query-generator';
 import type { EscapeOptions, RemoveIndexQueryOptions, TableNameOrModel } from '../abstract/query-generator-typescript';
+import type { TableName } from '../abstract/query-interface.js';
+import { ENUM } from './data-types';
 
 /**
  * Temporary class to ease the TypeScript migration
@@ -95,4 +97,155 @@ export class PostgresQueryGeneratorTypeScript extends AbstractQueryGenerator {
   formatUnquoteJson(arg: Expression, options?: EscapeOptions) {
     return `${this.escape(arg, options)}#>>ARRAY[]::TEXT[]`;
   }
+
+  pgEnumName(
+    tableName: TableName,
+    columnName?: string | undefined,
+    customName?: string | undefined,
+    options: PgEnumNameOptions = {},
+  ) {
+    const tableDetails = this.extractTableDetails(tableName, options);
+
+    let prefixedEnumName;
+    if (customName == null) {
+      prefixedEnumName = `enum_${tableDetails.tableName}_${columnName}`;
+    } else {
+      prefixedEnumName = `enum_${customName}`;
+    }
+
+    if (options.noEscape) {
+      return prefixedEnumName;
+    }
+
+    const escapedEnumName = this.quoteIdentifier(prefixedEnumName);
+
+    if (Boolean(options.schema) !== false && tableDetails.schema) {
+      return this.quoteIdentifier(tableDetails.schema) + (tableDetails.delimiter ?? '.') + escapedEnumName;
+    }
+
+    return escapedEnumName;
+  }
+
+  pgListEnums(tableName: TableName, attrName: string, customName: string | undefined, options?: PgEnumNameOptions): string;
+  pgListEnums(tableName: TableName, attrName?: undefined, customName?: undefined, options?: PgEnumNameOptions): string;
+  pgListEnums(
+    tableName: TableName,
+    attrName?: string | undefined,
+    customName?: string | undefined,
+    options?: PgEnumNameOptions,
+  ) {
+    let enumName = '';
+    let schema: string | undefined;
+
+    if (tableName != null) {
+      const tableDetails = this.extractTableDetails(tableName, options);
+      if (tableDetails.schema) {
+        schema = tableDetails.schema;
+      } else if (attrName) {
+        // pgEnumName escapes as an identifier, we want to escape it as a string
+        enumName = ` AND t.typname=${this.escape(this.pgEnumName(tableDetails.tableName, attrName, customName, { noEscape: true }))}`;
+      }
+    }
+
+    if (!schema) {
+      schema = this.options.schema || this.dialect.getDefaultSchema();
+    }
+
+    return 'SELECT t.typname enum_name, array_agg(e.enumlabel ORDER BY enumsortorder) enum_value FROM pg_type t '
+      + 'JOIN pg_enum e ON t.oid = e.enumtypid '
+      + 'JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace '
+      + `WHERE n.nspname = ${this.escape(schema)}${enumName} GROUP BY 1`;
+  }
+
+  pgEnum(
+    tableName: TableName,
+    attr: string,
+    dataType: ENUM<never>,
+    options?: PgEnumNameOptions & { force?: boolean },
+  ) {
+    const enumName = this.pgEnumName(tableName, attr, dataType?.options?.customName, options);
+    let values;
+
+    if (dataType instanceof ENUM && dataType.options.values) {
+      values = `ENUM(${dataType.options.values.map(value => this.escape(value)).join(', ')})`;
+    } else {
+      const match = dataType.toString().match(/^ENUM\(.+\)/);
+      if (match) {
+        values = match[0];
+      } else {
+        throw new Error(`Invalid ENUM type: ${dataType}`);
+      }
+    }
+
+    let sql = `DO ${this.escape(`BEGIN CREATE TYPE ${enumName} AS ${values}; EXCEPTION WHEN duplicate_object THEN null; END`)};`;
+    if (options && options.force === true) {
+      sql = this.pgEnumDrop(tableName, attr, enumName) + sql;
+    }
+
+    return sql;
+  }
+
+  pgEnumAdd(
+    tableName: TableName,
+    attr: string,
+    value: string,
+    options: any,
+    customName?: string | undefined,
+  ) {
+    const enumName = this.pgEnumName(tableName, attr, customName, {});
+    let sql = `ALTER TYPE ${enumName} ADD VALUE IF NOT EXISTS `;
+
+    sql += this.escape(value);
+
+    if (options.before) {
+      sql += ` BEFORE ${this.escape(options.before)}`;
+    } else if (options.after) {
+      sql += ` AFTER ${this.escape(options.after)}`;
+    }
+
+    return sql;
+  }
+
+  pgEnumDrop(tableName: TableName, attr?: string | undefined, enumName?: string | undefined) {
+    enumName = enumName || this.pgEnumName(tableName, attr);
+
+    return `DROP TYPE IF EXISTS ${enumName}; `;
+  }
+
+  dataTypeMapping(
+    tableName: TableName,
+    attr: string,
+    dataType: string,
+    options: { enumCustomName?: string | undefined } = {},
+  ) {
+    if (dataType.includes('PRIMARY KEY')) {
+      dataType = dataType.replace('PRIMARY KEY', '');
+    }
+
+    if (dataType.includes('SERIAL')) {
+      if (dataType.includes('BIGINT')) {
+        dataType = dataType.replace('SERIAL', 'BIGSERIAL');
+        dataType = dataType.replace('BIGINT', '');
+      } else if (dataType.includes('SMALLINT')) {
+        dataType = dataType.replace('SERIAL', 'SMALLSERIAL');
+        dataType = dataType.replace('SMALLINT', '');
+      } else {
+        dataType = dataType.replace('INTEGER', '');
+      }
+
+      dataType = dataType.replace('NOT NULL', '');
+    }
+
+    if (dataType.startsWith('ENUM(')) {
+      dataType = dataType.replace(/^ENUM\(.+\)/, this.pgEnumName(tableName, attr, options.enumCustomName)); // TODO fix pgEnumName
+    }
+
+    return dataType;
+  }
 }
+
+type PgEnumNameOptions = {
+  schema?: string,
+  noEscape?: boolean,
+  delimeter?: string,
+};

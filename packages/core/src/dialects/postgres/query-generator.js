@@ -3,7 +3,6 @@
 import { EMPTY_OBJECT } from '../../utils/object.js';
 import { defaultValueSchemable } from '../../utils/query-builder-utils';
 import { generateIndexName } from '../../utils/string';
-import { ENUM } from './data-types';
 import { quoteIdentifier, removeTicks } from '../../utils/dialect';
 import { rejectInvalidOptions } from '../../utils/check';
 import {
@@ -650,85 +649,6 @@ export class PostgresQueryGenerator extends PostgresQueryGeneratorTypeScript {
     }).join(' OR ');
   }
 
-  pgEnumName(tableName, columnName, customName, options = {}) {
-    const tableDetails = this.extractTableDetails(tableName, options);
-
-    let prefixedEnumName;
-    if (customName == null) {
-      prefixedEnumName = `enum_${tableDetails.tableName}_${columnName}`;
-    } else {
-      prefixedEnumName = `enum_${customName}`;
-    }
-
-    if (options.noEscape) {
-      return prefixedEnumName;
-    }
-
-    const escapedEnumName = this.quoteIdentifier(prefixedEnumName);
-
-    if (options.schema !== false && tableDetails.schema) {
-      return this.quoteIdentifier(tableDetails.schema) + tableDetails.delimiter + escapedEnumName;
-    }
-
-    return escapedEnumName;
-  }
-
-  pgListEnums(tableName, attrName, customName, options) {
-    let enumName = '';
-    const tableDetails = tableName != null
-      ? this.extractTableDetails(tableName, options)
-      : { schema: this.options.schema || this.dialect.getDefaultSchema() };
-
-    if (tableDetails.tableName && attrName) {
-      // pgEnumName escapes as an identifier, we want to escape it as a string
-      enumName = ` AND t.typname=${this.escape(this.pgEnumName(tableDetails.tableName, attrName, customName, { noEscape: true }))}`;
-    }
-
-    return 'SELECT t.typname enum_name, array_agg(e.enumlabel ORDER BY enumsortorder) enum_value FROM pg_type t '
-      + 'JOIN pg_enum e ON t.oid = e.enumtypid '
-      + 'JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace '
-      + `WHERE n.nspname = ${this.escape(tableDetails.schema)}${enumName} GROUP BY 1`;
-  }
-
-  pgEnum(tableName, attr, dataType, options) {
-    const enumName = this.pgEnumName(tableName, attr, dataType?.options?.name, options);
-    let values;
-
-    if (dataType instanceof ENUM && dataType.options.values) {
-      values = `ENUM(${dataType.options.values.map(value => this.escape(value)).join(', ')})`;
-    } else {
-      values = dataType.toString().match(/^ENUM\(.+\)/)[0];
-    }
-
-    let sql = `DO ${this.escape(`BEGIN CREATE TYPE ${enumName} AS ${values}; EXCEPTION WHEN duplicate_object THEN null; END`)};`;
-    if (Boolean(options) && options.force === true) {
-      sql = this.pgEnumDrop(tableName, attr, enumName) + sql;
-    }
-
-    return sql;
-  }
-
-  pgEnumAdd(tableName, attr, value, options, customName) {
-    const enumName = this.pgEnumName(tableName, attr, customName, {});
-    let sql = `ALTER TYPE ${enumName} ADD VALUE IF NOT EXISTS `;
-
-    sql += this.escape(value);
-
-    if (options.before) {
-      sql += ` BEFORE ${this.escape(options.before)}`;
-    } else if (options.after) {
-      sql += ` AFTER ${this.escape(options.after)}`;
-    }
-
-    return sql;
-  }
-
-  pgEnumDrop(tableName, attr, enumName) {
-    enumName = enumName || this.pgEnumName(tableName, attr);
-
-    return `DROP TYPE IF EXISTS ${enumName}; `;
-  }
-
   fromArray(text) {
     if (Array.isArray(text)) {
       return text;
@@ -744,32 +664,6 @@ export class PostgresQueryGenerator extends PostgresQueryGeneratorTypeScript {
     matches = matches.map(m => m.replace(/",$/, '').replace(/,$/, '').replace(/(^"|"$)/g, ''));
 
     return matches.slice(0, -1);
-  }
-
-  dataTypeMapping(tableName, attr, dataType) {
-    if (dataType.includes('PRIMARY KEY')) {
-      dataType = dataType.replace('PRIMARY KEY', '');
-    }
-
-    if (dataType.includes('SERIAL')) {
-      if (dataType.includes('BIGINT')) {
-        dataType = dataType.replace('SERIAL', 'BIGSERIAL');
-        dataType = dataType.replace('BIGINT', '');
-      } else if (dataType.includes('SMALLINT')) {
-        dataType = dataType.replace('SERIAL', 'SMALLSERIAL');
-        dataType = dataType.replace('SMALLINT', '');
-      } else {
-        dataType = dataType.replace('INTEGER', '');
-      }
-
-      dataType = dataType.replace('NOT NULL', '');
-    }
-
-    if (dataType.startsWith('ENUM(')) {
-      dataType = dataType.replace(/^ENUM\(.+\)/, this.pgEnumName(tableName, attr)); // TODO fix pgEnumName
-    }
-
-    return dataType;
   }
 
   /**
